@@ -1,0 +1,15 @@
+apiVersion: v1
+entries:
+  agentscope-service:
+  - apiVersion: v2
+    appVersion: 2.1.0-BETA1
+    created: "2026-10-08T21:09:08.649163+08:00"
+    description: AgentScope Service gateway, control plane, managed dataplane and
+      scheduler
+    digest: 41bff0c677addb5fc53acae684dfa7ae227015405cdb30c520eda285ec02da95
+    name: agentscope-service
+    type: application
+    urls:
+    - https://chickenlj.github.io/helm-charts/agentscope-service-2.1.0-BETA1.tgz
+    version: 2.1.0-BETA1
+generated: "2026-10-08T21:09:08.648612+08:00"

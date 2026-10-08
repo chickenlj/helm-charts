@@ -1,0 +1,79 @@
+name: Publish Helm repository
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Chart version from an AgentScope Release, without v (empty deploys current index)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: helm-repository
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4.3.0
+        with:
+          version: v3.17.3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install PyYAML==6.0.3
+      - run: python -m unittest discover -s scripts -p 'test_*.py'
+      - name: Fetch and publish the original Release archive
+        if: inputs.version != '' && github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python -c 'import os,re; assert re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", os.environ["VERSION"]), "Invalid version"'
+          archive="agentscope-service-${VERSION}.tgz"
+          gh release download "v${VERSION}" --repo agentscope-ai/agentscope-java --pattern "$archive" --dir "$RUNNER_TEMP/chart"
+          gh api "repos/agentscope-ai/agentscope-java/releases/tags/v${VERSION}" > "$RUNNER_TEMP/release.json"
+          python - "$RUNNER_TEMP/release.json" "$RUNNER_TEMP/chart/$archive" <<'PY'
+          import hashlib, json, pathlib, sys
+          release = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          archive = pathlib.Path(sys.argv[2])
+          asset = next(a for a in release['assets'] if a['name'] == archive.name)
+          assert asset['digest'] == 'sha256:' + hashlib.sha256(archive.read_bytes()).hexdigest(), 'Release digest mismatch'
+          PY
+          python scripts/publish.py "$RUNNER_TEMP/chart/$archive" --version "$VERSION"
+          helm template service "docs/$archive" --namespace agentscope \
+            --set imageRepository=sca-registry.cn-hangzhou.cr.aliyuncs.com/agentscope \
+            --set existingSecret=agentscope-service > /dev/null
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add docs
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: publish agentscope-service ${VERSION}"
+            git push origin HEAD:main
+          fi
+      - name: Render the published Chart
+        run: |
+          for chart in docs/*.tgz; do
+            helm template service "$chart" --namespace agentscope \
+              --set imageRepository=sca-registry.cn-hangzhou.cr.aliyuncs.com/agentscope \
+              --set existingSecret=agentscope-service > /dev/null
+          done
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - uses: actions/deploy-pages@v4
+        id: deploy
